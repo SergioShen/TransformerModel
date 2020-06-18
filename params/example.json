@@ -1,0 +1,53 @@
+{
+  "model_params": {
+    "src_vocab_size": 4000,
+    "tgt_vocab_size": 4000,
+    "share_vocab": false,
+    "d_model": 512,
+    "nhead": 8,
+    "num_encoder_layers": 6,
+    "num_decoder_layers": 6,
+    "dim_feedforward": 2048,
+    "drouput": 0.1,
+    "activation": "relu",
+    "weight_tying": true
+  },
+  "train_params": {
+    "optimizer": "AdamW",
+    "optimizer_args": {
+      "lr": 1e-4,
+      "weight_decay": 1e-4
+    },
+    "lr_scheduler": "ReduceLROnPlateau",
+    "lr_scheduler_args": {
+      "factor": 0.1,
+      "threshold": 0.0001,
+      "threshold_mode": "rel",
+      "patience": 4
+    },
+    "loss_function": "CrossEntropyLoss",
+    "loss_function_args": {
+      "ignore_index": 1
+    },
+    "output_dir": "./result/example",
+    "batch_size": 64,
+    "n_epochs": 30,
+    "start_epoch": 1,
+    "grad_clip": 0.5,
+    "print_step": 100,
+    "dataset": {
+      "train": "./dataset/train.json",
+      "valid": "./dataset/valid.json",
+      "test": "./dataset/test.json",
+      "src_vocab_path": "./dataset/src_vocab.pkl",
+      "tgt_vocab_path": "./dataset/tgt_vocab.pkl",
+      "share_vocab": false,
+      "reserved_tokens": [
+        "<unk>",
+        "<pad>",
+        "<sos>",
+        "<eos>"
+      ]
+    }
+  }
+}
