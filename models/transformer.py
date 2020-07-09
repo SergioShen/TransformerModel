@@ -145,7 +145,46 @@ class Transformer(Module):
 
     def _reset_parameters(self):
         r"""Initiate parameters in the transformer model."""
+        for p in self.parameters():
+            if p.dim() > 1:
+                xavier_uniform_(p)
 
+
+class GPT(Module):
+    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6, dim_feedforward=2048, dropout=0.1,
+                 activation="relu", custom_encoder=None):
+        super(GPT, self).__init__()
+
+        if custom_encoder is not None:
+            self.encoder = custom_encoder
+        else:
+            encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation)
+            encoder_norm = LayerNorm(d_model)
+            self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
+
+        self._reset_parameters()
+
+        self.d_model = d_model
+        self.nhead = nhead
+
+    def forward(self, src, src_mask=None, src_key_padding_mask=None):
+
+        if src.size(2) != self.d_model:
+            raise RuntimeError("the feature number of src and tgt must be equal to d_model")
+
+        output = self.encoder(src, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+        return output
+
+    def generate_square_subsequent_mask(self, sz):
+        r"""Generate a square mask for the sequence. The masked positions are filled with float('-inf').
+            Unmasked positions are filled with float(0.0).
+        """
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
+
+    def _reset_parameters(self):
+        r"""Initiate parameters in the transformer model."""
         for p in self.parameters():
             if p.dim() > 1:
                 xavier_uniform_(p)

@@ -8,7 +8,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from .transformer import Transformer
+from .transformer import Transformer, GPT
 from .module import PositionalEncoding
 
 
@@ -27,7 +27,7 @@ class TransformerModel(nn.Module):
         self.share_vocab = model_params['share_vocab']
         self.weight_tying = model_params['weight_tying']
 
-        # Build transformer model
+        # Build transformer_params model
         self.transformer = Transformer(self.d_model, self.nhead, self.num_encoder_layers, self.num_decoder_layers,
                                        self.dim_feedforward, self.drouput, self.activation)
         self.positional_encoding = PositionalEncoding(self.d_model, self.drouput)
@@ -127,5 +127,102 @@ class TransformerModel(nn.Module):
     def _get_init_output_ids(self, decode_length, batch_size):
         output_ids = torch.ones(decode_length, batch_size, dtype=torch.int64)
         output_ids[0].fill_(2)
+
+        return output_ids
+
+
+class GPTModel(nn.Module):
+    def __init__(self, model_params):
+        super().__init__()
+        self.vocab_size = model_params['vocab_size']
+        self.d_model = model_params['d_model']
+        self.nhead = model_params['nhead']
+        self.num_encoder_layers = model_params['num_encoder_layers']
+        self.dim_feedforward = model_params['dim_feedforward']
+        self.drouput = model_params['drouput']
+        self.activation = model_params['activation']
+        self.weight_tying = model_params['weight_tying']
+
+        # Build transformer_params model
+        self.gpt = GPT(self.d_model, self.nhead, self.num_encoder_layers, self.dim_feedforward,
+                       self.drouput, self.activation)
+        self.positional_encoding = PositionalEncoding(self.d_model, self.drouput)
+
+        # Build embedding and out layer
+        self.embedding = nn.Embedding(self.vocab_size, self.d_model)
+        self.embedding.reset_parameters()
+        self.out = nn.Linear(self.d_model, self.vocab_size)
+        if self.weight_tying:
+            self.out.weight = self.embedding.weight
+
+        self._reset_parameters()
+
+    def forward(self, input_ids):
+        """
+        Model forward
+        :param input_ids: (S, N)
+        :return: logits: (T, N, E)
+        """
+        device = input_ids.device
+
+        src_embedded = self.embedding(input_ids)
+
+        src_mask = self.gpt.generate_square_subsequent_mask(input_ids.size(0)).to(device)
+        src_key_padding_mask = input_ids.transpose(1, 0) == 1
+
+        output = self.gpt(src_embedded, src_mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+        logits = self.out(output)
+
+        return logits
+
+    def inference(self, input_ids, max_decode_length):
+        """
+        Model inference
+        :param input_ids: (S, N)
+        :param max_decode_length: Max length of decoder steps
+        :return: output_ids: (T, N); output_lengths: (N)
+        """
+        device = input_ids.device
+        batch_size = input_ids.size(1)  # Batch size must be 1
+        offset = input_ids.size(0)
+
+        decode_finish = np.asarray([False] * batch_size, dtype=np.bool)
+        output_lengths = np.asarray([max_decode_length] * batch_size, dtype=np.int32)
+
+        output_ids = self._get_init_output_ids(max_decode_length, batch_size).to(device)
+
+        src_mask = self.gpt.generate_square_subsequent_mask(max_decode_length + offset).to(device)
+
+        # print('input_ids', input_ids.reshape(-1))
+        for i in range(max_decode_length):
+            # print('output_ids %d' % i, output_ids.reshape(-1))
+            step_input = torch.cat([input_ids, output_ids], dim=0)
+            src_key_padding_mask = step_input.transpose(1, 0) == 1
+            src_embedded = self.embedding(step_input)
+            output = self.gpt(src_embedded, src_mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+            step_logits = output[i + offset - 1]  # (N, E)
+            step_pred = step_logits.argmax(1)
+            output_ids[i] = step_pred
+
+            # Check finish
+            finish = (step_pred == 4).cpu().numpy()
+            new_finish = (finish & (~decode_finish)).astype(np.bool)
+            # print('new_finish', new_finish)
+            output_lengths[new_finish] = (i + 1)
+            decode_finish = decode_finish | finish
+            if sum(decode_finish) == batch_size:
+                break
+
+        return output_ids, output_lengths
+
+    def _reset_parameters(self):
+        init_range = 0.1
+        self.embedding.weight.data.uniform_(-init_range, init_range)
+        self.out.bias.data.zero_()
+        if not self.weight_tying:
+            self.out.weight.data.uniform_(-init_range, init_range)
+
+    def _get_init_output_ids(self, decode_length, batch_size):
+        output_ids = torch.ones(decode_length, batch_size, dtype=torch.int64)
 
         return output_ids
