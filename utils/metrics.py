@@ -6,8 +6,10 @@
 # @Project: TransformerModel
 
 
-def get_correct_num(hyp, ref, pad_id=1, unknown_true=False):
+def get_correct_num(hyp, ref, pad_id=1, unknown_true=False, ref_condition=None):
     valid = ref != pad_id
+    if ref_condition:
+        valid = valid & (ref_condition(ref))
     if unknown_true:
         correct = (hyp == ref) & valid
     else:
