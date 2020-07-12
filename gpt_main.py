@@ -53,6 +53,10 @@ class MyTrainer(Trainer):
         correct, total = get_correct_num(logits.argmax(-1).cpu().numpy(), target_ids.cpu().numpy())
         self.cache['correct'] = self.cache.get('correct', 0) + correct
         self.cache['total'] = self.cache.get('total', 0) + total
+        rule_correct, rule_total = get_correct_num(logits.argmax(-1).cpu().numpy(), target_ids.cpu().numpy(),
+                                                   ref_condition=lambda x: x <= 96)
+        self.cache['rule_correct'] = self.cache.get('rule_correct', 0) + rule_correct
+        self.cache['rule_total'] = self.cache.get('rule_total', 0) + rule_total
 
         return loss.item()
 
@@ -62,6 +66,12 @@ class MyTrainer(Trainer):
         self.writer.add_scalar('accuracy/%s_accuracy' % name, accuracy, self.step)
         self.cache['correct'] = 0
         self.cache['total'] = 0
+
+        rule_accuracy = self.cache['rule_correct'] / self.cache['rule_total']
+        self.logger.info('%s rule accuracy: %.6f' % (name.capitalize(), rule_accuracy))
+        self.writer.add_scalar('accuracy/%s_rule_accuracy' % name, rule_accuracy, self.step)
+        self.cache['rule_correct'] = 0
+        self.cache['rule_total'] = 0
 
     def handle_epoch_other_infos(self):
         self.lr_scheduler.step(self.cache['valid_loss'])
@@ -133,8 +143,8 @@ def main(args):
     logger.debug('Loading vocabulary...')
     field = torchtext.data.field.Field(init_token='<sos>', eos_token='<eos>')
     field.vocab = pickle.load(Path(train_params['dataset']['vocab_path']).open('rb'))
-    assert len(field.vocab) == model_params['vocab_size']
     logger.info('Vocab loaded, vocab size: %d' % len(field.vocab))
+    assert len(field.vocab) == model_params['vocab_size']
     logger.debug('Loading dataset...')
 
     datasets = dict()
@@ -144,9 +154,8 @@ def main(args):
         dataset_names = ['valid', 'test']
     for name in dataset_names:
         dataset = torchtext.data.TabularDataset(Path(train_params['dataset'][name]), 'json',
-                                                {'tokens': ('tokens', field),
-                                                 'input_tokens': ('input_ids', field),
-                                                 'output_tokens': ('output_ids', field)})
+                                                {'action_tokens': ('tokens', field)},
+                                                filter_pred=lambda x: len(x.tokens) <= 600)
         datasets[name] = dataset
         logger.debug('%s size: %d' % (name.capitalize(), len(dataset)))
 
@@ -157,7 +166,7 @@ def main(args):
         from utils.adamW import AdamW
         optimizer = AdamW(model.parameters(), **train_params['optimizer_args'])
     else:
-        optimizer = getattr(optim, train_params['optimizer'])(**train_params['optimizer_args'])
+        optimizer = getattr(optim, train_params['optimizer'])(model.parameters(), **train_params['optimizer_args'])
     lr_scheduler = getattr(optim.lr_scheduler, train_params['lr_scheduler'])(
         optimizer, **train_params['lr_scheduler_args'])
     loss_function = getattr(nn, train_params['loss_function'])(**train_params['loss_function_args'])
