@@ -175,45 +175,81 @@ class GPTModel(nn.Module):
 
         return logits
 
-    def inference(self, input_ids, max_decode_length):
+    def inference(self, input_ids, max_decode_length, beam_size):
         """
         Model inference
         :param input_ids: (S, N)
         :param max_decode_length: Max length of decoder steps
+        :param beam_size: beam search size
         :return: output_ids: (T, N); output_lengths: (N)
         """
         device = input_ids.device
-        batch_size = input_ids.size(1)  # Batch size must be 1
-        offset = input_ids.size(0)
+        input_length = input_ids.size(0)
+        batch_size = input_ids.size(1)
+        assert batch_size == 1
 
-        decode_finish = np.asarray([False] * batch_size, dtype=np.bool)
-        output_lengths = np.asarray([max_decode_length] * batch_size, dtype=np.int32)
+        output_seqs = list()
+        output_lengths = list()
+        output_seq_scores = list()
 
-        output_ids = self._get_init_output_ids(max_decode_length, batch_size).to(device)
+        output_ids = self._get_init_output_ids(max_decode_length, 1).to(device)  # (P)
+        output_scores = torch.tensor([0], dtype=torch.float32).to(device)  # (P)
 
-        src_mask = self.gpt.generate_square_subsequent_mask(max_decode_length + offset).to(device)
+        src_mask = self.gpt.generate_square_subsequent_mask(max_decode_length + input_length).to(device)
 
-        # print('input_ids', input_ids.reshape(-1))
         for i in range(max_decode_length):
-            # print('output_ids %d' % i, output_ids.reshape(-1))
-            step_input = torch.cat([input_ids, output_ids], dim=0)
-            src_key_padding_mask = step_input.transpose(1, 0) == 1
+            prefix_size = output_ids.size(1)
+            expanded_input_ids = input_ids.expand([input_length, prefix_size])  # (S, P)
+            step_input = torch.cat([expanded_input_ids, output_ids], dim=0)  # (S + T, P)
+            src_key_padding_mask = step_input.t() == 1
             src_embedded = self.embedding(step_input)
             output = self.gpt(src_embedded, src_mask=src_mask, src_key_padding_mask=src_key_padding_mask)
-            step_logits = output[i + offset - 1]  # (N, E)
-            step_pred = step_logits.argmax(1)
-            output_ids[i] = step_pred
 
-            # Check finish
-            finish = (step_pred == 4).cpu().numpy()
-            new_finish = (finish & (~decode_finish)).astype(np.bool)
-            # print('new_finish', new_finish)
-            output_lengths[new_finish] = (i + 1)
-            decode_finish = decode_finish | finish
-            if sum(decode_finish) == batch_size:
+            # Compute step top k scores
+            step_logits = output[i + input_length - 1]  # (P, D)
+            step_scores = torch.log_softmax(step_logits, dim=1)  # (P, D)
+            step_top_k_scores, step_top_k_indices = step_scores.topk(beam_size, dim=1)  # (P, B), (P, B)
+
+            step_top_k_scores = step_top_k_scores.reshape(-1)  # (P * B)
+            step_top_k_indices = step_top_k_indices.reshape(-1)  # (P * B)
+
+            # Compute global top k scores
+            output_scores = output_scores.repeat(beam_size, 1).t().reshape(-1) + step_top_k_scores  # (P * B)
+            top_k_scores, top_k_indices = output_scores.topk(beam_size, dim=0)  # (B), (B)
+            step_output_ids = step_top_k_indices.index_select(dim=0, index=top_k_indices)  # (B)
+
+            # Update output ids
+            prefix_indices = top_k_indices / beam_size  # (B)
+            output_ids = torch.index_select(output_ids, dim=1, index=prefix_indices)  # (S, B)
+            output_ids[i] = step_output_ids
+            output_scores = top_k_scores  # (B)
+
+            # Remove finished items
+            step_finish = step_output_ids == 4  # (B)
+            keep_indices = list()
+            for c, finish in enumerate(step_finish):
+                finish = finish.item()
+                if finish:
+                    if len(output_seqs) < beam_size:
+                        output_seqs.append(output_ids[:i + 1, c].cpu().tolist())
+                        output_lengths.append(i + 1)
+                        output_seq_scores.append(output_scores[c].cpu().item())
+                else:
+                    keep_indices.append(c)
+
+            keep_indices = torch.tensor(keep_indices, dtype=torch.int64).to(device)  # (P)
+            output_ids = output_ids.index_select(dim=1, index=keep_indices)  # (S, P)
+            output_scores = output_scores.index_select(dim=0, index=keep_indices)  # (P)
+
+            if len(output_seqs) == beam_size:
                 break
 
-        return output_ids, output_lengths
+        for i in range(beam_size - len(output_seqs)):
+            output_seqs.append(output_ids[:, i].cpu().tolist())
+            output_lengths.append(max_decode_length)
+            output_seq_scores.append(output_scores[i].cpu().item())
+
+        return output_ids, output_lengths, output_seq_scores
 
     def _reset_parameters(self):
         init_range = 0.1
