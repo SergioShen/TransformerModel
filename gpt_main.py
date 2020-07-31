@@ -77,33 +77,7 @@ class MyTrainer(Trainer):
         self.lr_scheduler.step(self.cache['valid_loss'])
 
     def inference(self, dataset, name, tgt_vocab, max_decode_length=64):
-        self.model.eval()
-        device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        iterator = torchtext.data.iterator.Iterator(dataset, 1, device=device)
-
-        hypotheses = list()
-        references = list()
-
-        for data_piece in dataset:
-            references.append([data_piece.output_ids])
-
-        with torch.no_grad():
-            for batch_data in iter(iterator):
-                input_ids = batch_data.input_ids[:-1]
-                output_ids, output_lengths = self.model.inference(input_ids, max_decode_length)
-                output_ids = output_ids.transpose(1, 0).cpu().numpy()
-                for i in range(len(output_ids)):
-                    remove_padding = output_ids[i][:output_lengths[i]].tolist()
-                    if remove_padding[0] == 2:
-                        remove_padding = remove_padding[1:]
-                    if remove_padding[-1] == 3:
-                        remove_padding = remove_padding[:-1]
-                    hypo = [tgt_vocab.itos[idx] for idx in remove_padding]
-                    if ';' in hypo:
-                        hypo = hypo[:hypo.index(';')]
-                    hypotheses.append(hypo)
-        bleu_score = corpus_bleu(references, hypotheses)
-        self.logger.info('%s BLEU: %.6f' % (name.capitalize(), bleu_score))
+        pass
 
 
 def main(args):
@@ -149,15 +123,20 @@ def main(args):
 
     datasets = dict()
     if args.train:
-        dataset_names = ['train', 'valid', 'test']
+        for name in ['train', 'valid', 'test']:
+            dataset = torchtext.data.TabularDataset(Path(train_params['dataset'][name]), 'json',
+                                                    {'action_tokens': ('tokens', field)},
+                                                    filter_pred=lambda x: len(x.tokens) <= 600)
+            datasets[name] = dataset
+            logger.debug('%s size: %d' % (name.capitalize(), len(dataset)))
     elif args.inference:
-        dataset_names = ['valid', 'test']
-    for name in dataset_names:
-        dataset = torchtext.data.TabularDataset(Path(train_params['dataset'][name]), 'json',
-                                                {'action_tokens': ('tokens', field)},
-                                                filter_pred=lambda x: len(x.tokens) <= 600)
-        datasets[name] = dataset
-        logger.debug('%s size: %d' % (name.capitalize(), len(dataset)))
+        for name in ['valid', 'test']:
+            dataset = torchtext.data.TabularDataset(Path(train_params['dataset'][name]), 'json',
+                                                    {'src_action_tokens': ('input_ids', field),
+                                                     'tgt_action_tokens': ('output_ids', field)},
+                                                    filter_pred=lambda x: len(x.tokens) <= 600)
+            datasets[name] = dataset
+            logger.debug('%s size: %d' % (name.capitalize(), len(dataset)))
 
     # Build model
     logger.debug('Building model...')
