@@ -159,7 +159,7 @@ def main(args):
         from utils.adamW import AdamW
         optimizer = AdamW(model.parameters(), **train_params['optimizer_args'])
     else:
-        optimizer = getattr(optim, train_params['optimizer'])(**train_params['optimizer_args'])
+        optimizer = getattr(optim, train_params['optimizer'])(model.parameters(), **train_params['optimizer_args'])
     lr_scheduler = getattr(optim.lr_scheduler, train_params['lr_scheduler'])(
         optimizer, **train_params['lr_scheduler_args'])
     loss_function = getattr(nn, train_params['loss_function'])(**train_params['loss_function_args'])
