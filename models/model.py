@@ -34,7 +34,6 @@ class TransformerModel(nn.Module):
 
         # Build embedding and out layer
         self.src_embedding = nn.Embedding(self.src_vocab_size, self.d_model)
-        self.src_embedding.reset_parameters()
         if self.share_vocab:
             assert self.src_vocab_size == self.tgt_vocab_size
             self.tgt_embedding = self.src_embedding
@@ -120,6 +119,8 @@ class TransformerModel(nn.Module):
     def _reset_parameters(self):
         init_range = 0.1
         self.src_embedding.weight.data.uniform_(-init_range, init_range)
+        if not self.share_vocab:
+            self.tgt_embedding.weight.data.uniform_(-init_range, init_range)
         self.out.bias.data.zero_()
         if not self.weight_tying:
             self.out.weight.data.uniform_(-init_range, init_range)
