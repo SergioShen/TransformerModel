@@ -54,7 +54,7 @@ class MyTrainer(Trainer):
         self.cache['correct'] = self.cache.get('correct', 0) + correct
         self.cache['total'] = self.cache.get('total', 0) + total
         rule_correct, rule_total = get_correct_num(logits.argmax(-1).cpu().numpy(), target_ids.cpu().numpy(),
-                                                   ref_condition=lambda x: 4 <= x <= 100)
+                                                   ref_condition=lambda x: (4 <= x) & (x <= 100))
         self.cache['rule_correct'] = self.cache.get('rule_correct', 0) + rule_correct
         self.cache['rule_total'] = self.cache.get('rule_total', 0) + rule_total
 

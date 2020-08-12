@@ -147,8 +147,9 @@ def main(args):
         dataset_names = ['valid', 'test']
     for name in dataset_names:
         dataset = torchtext.data.TabularDataset(Path(train_params['dataset'][name]), 'json',
-                                                {'input_tokens': ('input_ids', src_field),
-                                                 'output_tokens': ('output_ids', tgt_field)})
+                                                {'src_tokens': ('input_ids', src_field),
+                                                 'tgt_tokens': ('output_ids', tgt_field)},
+                                                filter_pred=lambda x: len(x.input_ids) + len(x.output_ids) <= 800)
         datasets[name] = dataset
         logger.debug('%s size: %d' % (name.capitalize(), len(dataset)))
 
