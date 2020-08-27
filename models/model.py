@@ -108,7 +108,7 @@ class TransformerModel(nn.Module):
             output_ids[i + 1] = step_pred
 
             # Check finish
-            finish = (step_pred == 4).cpu().numpy()
+            finish = (step_pred == 3).cpu().numpy()
             output_lengths[finish & (~decode_finish)] = (i + 2)
             decode_finish = decode_finish | finish
             if sum(decode_finish) == batch_size:
@@ -226,7 +226,7 @@ class GPTModel(nn.Module):
             output_scores = top_k_scores  # (B)
 
             # Remove finished items
-            step_finish = step_output_ids == 4  # (B)
+            step_finish = step_output_ids == 3  # (B)
             keep_indices = list()
             for c, finish in enumerate(step_finish):
                 finish = finish.item()
