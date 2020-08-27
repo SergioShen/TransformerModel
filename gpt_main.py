@@ -88,7 +88,7 @@ def main(args):
     output_dir = Path(train_params['output_dir'])
     if not output_dir.exists():
         output_dir.mkdir()
-    if len(list(output_dir.iterdir())) != 0 and args.train:
+    if len(list(output_dir.iterdir())) != 0 and args.train and not args.load:
         raise FileExistsError('Output dir \'%s\' is not empty' % output_dir)
 
     # Set up logger and TensorBoard writer
@@ -125,18 +125,12 @@ def main(args):
     if args.train:
         for name in ['train', 'valid', 'test']:
             dataset = torchtext.data.TabularDataset(Path(train_params['dataset'][name]), 'json',
-                                                    {'tokens': ('tokens', field)},
-                                                    filter_pred=lambda x: len(x.tokens) <= 1000)
+                                                    {train_params['dataset']['input_key']: ('tokens', field)})
             datasets[name] = dataset
             logger.debug('%s size: %d' % (name.capitalize(), len(dataset)))
     elif args.inference:
-        for name in ['valid', 'test']:
-            dataset = torchtext.data.TabularDataset(Path(train_params['dataset'][name]), 'json',
-                                                    {'src_action_tokens': ('input_ids', field),
-                                                     'tgt_action_tokens': ('output_ids', field)},
-                                                    filter_pred=lambda x: len(x.tokens) <= 1000)
-            datasets[name] = dataset
-            logger.debug('%s size: %d' % (name.capitalize(), len(dataset)))
+        raise NotImplementedError
+    logger.debug('Dataset loaded')
 
     # Build model
     logger.debug('Building model...')
