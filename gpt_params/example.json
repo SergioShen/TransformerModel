@@ -37,6 +37,7 @@
       "valid": "./dataset/valid.json",
       "test": "./dataset/test.json",
       "vocab_path": "./dataset/vocab.pkl",
+      "input_key": "tokens",
       "reserved_tokens": [
         "<unk>",
         "<pad>",
