@@ -73,48 +73,90 @@ class TransformerModel(nn.Module):
 
         return logits
 
-    def inference(self, input_ids, max_decode_length):
+    def inference(self, input_ids, max_decode_length, beam_size):
         """
         Model inference
         :param input_ids: (S, N)
         :param max_decode_length: Max length of decoder steps
+        :param beam_size: beam search size
         :return: output_ids: (T, N)
         """
         device = input_ids.device
         batch_size = input_ids.size(1)
+        assert batch_size == 1
+
+        output_seqs = list()
+        output_lengths = list()
+        output_seq_scores = list()
 
         src_embedded = self.src_embedding(input_ids)
-        output_ids = self._get_init_output_ids(max_decode_length, batch_size).to(device)
-        decode_finish = np.asarray([False] * batch_size, dtype=np.bool)
-        output_lengths = np.asarray([max_decode_length] * batch_size, dtype=np.int32)
+        output_ids = self._get_init_output_ids(max_decode_length + 1, 1).to(device)
+        output_scores = torch.tensor([0], dtype=torch.float32).to(device)
 
         src_mask = None
-        tgt_mask = self.transformer.generate_square_subsequent_mask(max_decode_length).to(device)
+        src_key_padding_mask = input_ids.t() == 1
+        tgt_mask = self.transformer.generate_square_subsequent_mask(max_decode_length + 1).to(device)
         memory_mask = None
-
-        src_key_padding_mask = input_ids.transpose(1, 0) == 1
-        tgt_key_padding_mask = output_ids.transpose(1, 0) == 1
-        memory_key_padding_mask = src_key_padding_mask
 
         memory = self.transformer.encoder(src_embedded, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
 
-        for i in range(max_decode_length - 1):
+        for i in range(max_decode_length):
+            prefix_size = output_ids.size(1)
+            expanded_input_ids = input_ids.expand([input_ids.size(0), prefix_size])
+            expanded_memory = memory.expand([memory.size(0), prefix_size, memory.size(2)])
+            tgt_key_padding_mask = output_ids.t() == 1
+            memory_key_padding_mask = expanded_input_ids.t() == 1
             tgt_embedded = self.tgt_embedding(output_ids)
-            output = self.transformer.decoder(tgt_embedded, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
+            output = self.transformer.decoder(tgt_embedded, expanded_memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
                                               tgt_key_padding_mask=tgt_key_padding_mask,
                                               memory_key_padding_mask=memory_key_padding_mask)
-            step_logits = output[i]  # (N, E)
-            step_pred = step_logits.argmax(1)
-            output_ids[i + 1] = step_pred
 
-            # Check finish
-            finish = (step_pred == 3).cpu().numpy()
-            output_lengths[finish & (~decode_finish)] = (i + 2)
-            decode_finish = decode_finish | finish
-            if sum(decode_finish) == batch_size:
+            # Compute step top k scores
+            step_output = output[i]
+            step_logits = self.out(step_output)
+            step_scores = torch.log_softmax(step_logits, dim=1)  # (P, D)
+            step_top_k_scores, step_top_k_indices = step_scores.topk(beam_size, dim=1)  # (P, B), (P, B)
+
+            step_top_k_scores = step_top_k_scores.reshape(-1)  # (P * B)
+            step_top_k_indices = step_top_k_indices.reshape(-1)  # (P * B)
+
+            # Compute global top k scores
+            output_scores = output_scores.repeat(beam_size, 1).t().reshape(-1) + step_top_k_scores  # (P * B)
+            top_k_scores, top_k_indices = output_scores.topk(beam_size, dim=0)  # (B), (B)
+            step_output_ids = step_top_k_indices.index_select(dim=0, index=top_k_indices)  # (B)
+
+            # Update output ids
+            prefix_indices = top_k_indices / beam_size  # (B)
+            output_ids = torch.index_select(output_ids, dim=1, index=prefix_indices)  # (S, B)
+            output_ids[i + 1] = step_output_ids
+            output_scores = top_k_scores  # (B)
+
+            # Remove finished items
+            step_finish = step_output_ids == 3  # (B)
+            keep_indices = list()
+            for c, finish in enumerate(step_finish):
+                finish = finish.item()
+                if finish:
+                    if len(output_seqs) < beam_size:
+                        output_seqs.append(output_ids[:i + 2, c].cpu().tolist())
+                        output_lengths.append(i + 1)
+                        output_seq_scores.append(output_scores[c].cpu().item() / (i + 1))
+                else:
+                    keep_indices.append(c)
+
+            keep_indices = torch.tensor(keep_indices, dtype=torch.int64).to(device)  # (P)
+            output_ids = output_ids.index_select(dim=1, index=keep_indices)  # (S, P)
+            output_scores = output_scores.index_select(dim=0, index=keep_indices)  # (P)
+
+            if len(output_seqs) == beam_size:
                 break
 
-        return output_ids, output_lengths
+        for i in range(beam_size - len(output_seqs)):
+            output_seqs.append(output_ids[:, i].cpu().tolist())
+            output_lengths.append(max_decode_length)
+            output_seq_scores.append(output_scores[i].cpu().item() / max_decode_length)
+
+        return output_seqs, output_lengths, output_seq_scores
 
     def _reset_parameters(self):
         init_range = 0.1
@@ -207,7 +249,8 @@ class GPTModel(nn.Module):
             output = self.gpt(src_embedded, src_mask=src_mask, src_key_padding_mask=src_key_padding_mask)
 
             # Compute step top k scores
-            step_logits = output[i + input_length - 1]  # (P, D)
+            step_output = output[i + input_length - 1]  # (P, D)
+            step_logits = self.out(step_output)
             step_scores = torch.log_softmax(step_logits, dim=1)  # (P, D)
             step_top_k_scores, step_top_k_indices = step_scores.topk(beam_size, dim=1)  # (P, B), (P, B)
 
@@ -234,7 +277,7 @@ class GPTModel(nn.Module):
                     if len(output_seqs) < beam_size:
                         output_seqs.append(output_ids[:i + 1, c].cpu().tolist())
                         output_lengths.append(i + 1)
-                        output_seq_scores.append(output_scores[c].cpu().item())
+                        output_seq_scores.append(output_scores[c].cpu().item() / (i + 1))
                 else:
                     keep_indices.append(c)
 
@@ -248,9 +291,9 @@ class GPTModel(nn.Module):
         for i in range(beam_size - len(output_seqs)):
             output_seqs.append(output_ids[:, i].cpu().tolist())
             output_lengths.append(max_decode_length)
-            output_seq_scores.append(output_scores[i].cpu().item())
+            output_seq_scores.append(output_scores[i].cpu().item() / max_decode_length)
 
-        return output_ids, output_lengths, output_seq_scores
+        return output_seqs, output_lengths, output_seq_scores
 
     def _reset_parameters(self):
         init_range = 0.1
