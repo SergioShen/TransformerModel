@@ -19,6 +19,7 @@ class Trainer:
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.loss_function = loss_function
+        self.train_params = train_params
         self.output_dir = Path(train_params['output_dir'])
         self.batch_size = train_params['batch_size']
         self.n_epochs = train_params['n_epochs']
@@ -48,9 +49,12 @@ class Trainer:
         else:
             checkpoint = torch.load(model_path, map_location='cpu')
         self.model.load_state_dict(checkpoint['model'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        self.loss_function = checkpoint['loss_function']
+        if self.optimizer and checkpoint['optimizer']:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if self.lr_scheduler and checkpoint['lr_scheduler']:
+            self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        if self.loss_function and checkpoint['loss_function']:
+            self.loss_function = checkpoint['loss_function']
 
         self.step = checkpoint['step']
         self.start_epoch = checkpoint['epoch'] + 1
