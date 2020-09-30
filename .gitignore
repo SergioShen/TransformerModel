@@ -1,2 +1,6 @@
-result/
-dataset/
+gpt_result/
+transformer_result/
+*_dataset
+
+gpt_params/
+transformer_params/
