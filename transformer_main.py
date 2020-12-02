@@ -69,31 +69,7 @@ class MyTrainer(Trainer):
         self.lr_scheduler.step(self.cache['valid_loss'])
 
     def inference(self, dataset, name, tgt_vocab, max_decode_length=64):
-        self.model.eval()
-        device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        iterator = torchtext.data.iterator.Iterator(dataset, self.batch_size, device=device)
-
-        hypotheses = list()
-        references = list()
-
-        for data_piece in dataset:
-            references.append([data_piece.output_ids])
-
-        with torch.no_grad():
-            for batch_data in iter(iterator):
-                input_ids = batch_data.input_ids
-                output_ids, output_lengths = self.model.inference(input_ids, max_decode_length)
-                output_ids = output_ids.transpose(1, 0).cpu().numpy()
-                for i in range(len(output_ids)):
-                    remove_padding = output_ids[i][:output_lengths[i]].tolist()
-                    if remove_padding[0] == 2:
-                        remove_padding = remove_padding[1:]
-                    if remove_padding[-1] == 3:
-                        remove_padding = remove_padding[:-1]
-                    hypo = [tgt_vocab.itos[idx] for idx in remove_padding]
-                    hypotheses.append(hypo)
-        bleu_score = corpus_bleu(references, hypotheses)
-        self.logger.info('%s BLEU: %.6f' % (name.capitalize(), bleu_score))
+        pass
 
 
 def main(args):
@@ -104,22 +80,16 @@ def main(args):
     output_dir = Path(train_params['output_dir'])
     if not output_dir.exists():
         output_dir.mkdir()
-    if len(list(output_dir.iterdir())) != 0 and args.train:
+    if len(list(output_dir.iterdir())) != 0:
         raise FileExistsError('Output dir \'%s\' is not empty' % output_dir)
 
     # Set up logger and TensorBoard writer
-    if args.train:
-        logger = get_logger(output_dir / 'train.log')
-    elif args.inference:
-        logger = get_logger(output_dir / 'inference.log')
+    logger = get_logger(output_dir / 'train.log')
     logger.debug('PID: %d', os.getpid())
     logger.info('Using params file: %s' % args.params)
     logger.info(json.dumps(params))
-    if args.train:
-        writer = SummaryWriter(str(output_dir))
-        writer.add_text('Params', json.dumps(params, indent='  '), 0)
-    elif args.inference:
-        writer = None
+    writer = SummaryWriter(str(output_dir))
+    writer.add_text('Params', json.dumps(params, indent='  '), 0)
     # Set random seed
     seed = 1911
     random.seed(seed)
@@ -141,11 +111,7 @@ def main(args):
     logger.debug('Loading dataset...')
 
     datasets = dict()
-    if args.train:
-        dataset_names = ['train', 'valid', 'test']
-    elif args.inference:
-        dataset_names = ['valid', 'test']
-    for name in dataset_names:
+    for name in ['train', 'valid', 'test']:
         dataset = torchtext.data.TabularDataset(Path(train_params['dataset'][name]), 'json',
                                                 {train_params['dataset']['input_key']: ('input_ids', src_field),
                                                  train_params['dataset']['output_key']: ('output_ids', tgt_field)})
@@ -172,35 +138,18 @@ def main(args):
     if args.load is not None:
         logger.info('Loading model from %s', args.load)
         trainer.load_model(args.load)
-    logger.info('Model loaded')
-    if args.train:
-        logger.info('Training begins at %d-th epoch...', train_params['start_epoch'])
-        trainer.train(datasets['train'], datasets['valid'], datasets['test'])
-    if args.inference:
-        model.eval()
-        logger.info('Inference begins...')
-        trainer.inference(datasets['valid'], 'valid', tgt_field.vocab)
-        trainer.inference(datasets['test'], 'test', tgt_field.vocab)
+        logger.info('Model loaded')
+
+    logger.info('Training begins at %d-th epoch...', train_params['start_epoch'])
+    trainer.train(datasets['train'], datasets['valid'], datasets['test'])
 
 
 if __name__ == '__main__':
     parser = ArgumentParser('Tree positional encoding experiment main function.')
     parser.add_argument('-p', '--params', action='store',
                         help='Path of configuration file, should be a .json file')
-    parser.add_argument('-t', '--train', action='store_true',
-                        help='Train a model')
-    parser.add_argument('-i', '--inference', action='store_true',
-                        help='Inference the model')
     parser.add_argument('-l', '--load', action='store', default=None,
                         help='Load a model from given path')
     args = parser.parse_args()
-
-    # Check arguments
-    if args.train + args.inference != 1:
-        print('Train and inference can\'t be set as True or False simultaneously')
-        exit(-1)
-    if args.inference and not args.load:
-        print('Should specify a checkpoint for inference')
-        exit(-1)
 
     main(args)
