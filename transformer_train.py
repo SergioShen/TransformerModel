@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # @Time: 00:36 2020/6/14
 # @Author: Sijie Shen
-# @File: main.py
+# @File: transformer_train.py
 # @Project: TransformerModel
 
 import torch
