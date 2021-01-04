@@ -73,9 +73,9 @@ class TransformerModel(nn.Module):
 
         return logits
 
-    def inference(self, input_ids, max_decode_length, beam_size):
+    def beam_search(self, input_ids, max_decode_length, beam_size):
         """
-        Model inference
+        Beam search
         :param input_ids: (S, N)
         :param max_decode_length: Max length of decoder steps
         :param beam_size: beam search size
@@ -126,7 +126,7 @@ class TransformerModel(nn.Module):
             step_output_ids = step_top_k_indices.index_select(dim=0, index=top_k_indices)  # (B)
 
             # Update output ids
-            prefix_indices = top_k_indices / beam_size  # (B)
+            prefix_indices = top_k_indices // beam_size  # (B)
             output_ids = torch.index_select(output_ids, dim=1, index=prefix_indices)  # (S, B)
             output_ids[i + 1] = step_output_ids
             output_scores = top_k_scores  # (B)
@@ -157,6 +157,49 @@ class TransformerModel(nn.Module):
             output_seq_scores.append(output_scores[i].cpu().item() / max_decode_length)
 
         return output_seqs, output_lengths, output_seq_scores
+
+    def inference(self, input_ids, max_decode_length):
+        """
+        Model inference
+        :param input_ids: (S, N)
+        :param max_decode_length: Max length of decoder steps
+        :return: output_ids: (T, N)
+        """
+        device = input_ids.device
+        batch_size = input_ids.size(1)
+        assert batch_size == 1
+
+        src_embedded = self.src_embedding(input_ids)
+        output_ids = torch.tensor([[2]], dtype=torch.int64).to(device)
+        output_seq = [2]
+
+        src_mask = None
+        src_key_padding_mask = input_ids.t() == 1
+        memory_mask = None
+
+        memory = self.transformer.encoder(src_embedded, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+        prev_states = None
+        for i in range(max_decode_length):
+            tgt_key_padding_mask = output_ids.t() == 1
+            memory_key_padding_mask = input_ids.t() == 1
+            tgt_mask = self.transformer.generate_square_subsequent_mask(i + 1).to(device)
+            tgt_embedded = self.tgt_embedding(output_ids)
+            output, prev_states = self.transformer.decoder.forward_step(tgt_embedded, prev_states, memory,
+                                                                        tgt_mask=tgt_mask, memory_mask=memory_mask,
+                                                                        tgt_key_padding_mask=tgt_key_padding_mask,
+                                                                        memory_key_padding_mask=memory_key_padding_mask)
+
+            # Compute step top k scores
+            step_output = output[i]
+            step_logits = self.out(step_output)
+            step_top_1 = step_logits.argmax(dim=1)
+            output_seq.append(step_top_1.item())
+            if output_seq[-1] == 3:
+                break
+
+            output_ids = torch.cat([output_ids, step_top_1.unsqueeze(0)], dim=0)
+
+        return output_seq
 
     def _reset_parameters(self):
         init_range = 0.1

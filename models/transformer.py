@@ -288,6 +288,43 @@ class TransformerDecoder(Module):
 
         return output
 
+    def forward_step(self, tgt, prev_states, memory, tgt_mask=None,
+                     memory_mask=None, tgt_key_padding_mask=None,
+                     memory_key_padding_mask=None):
+        """
+        Forward a step for decoder
+        :param tgt: the sequence to the decoder
+        :param prev_states: stashed stated of previous inputs. Should be a list (an item for each layer) or None
+        :param memory: the sequence from the last layer of the encoder
+        :param tgt_mask: the mask for the tgt sequence
+        :param memory_mask: the mask for the memory sequence
+        :param tgt_key_padding_mask: the mask for the tgt keys per batch
+        :param memory_key_padding_mask: the mask for the memory keys per batch
+        :return:
+        """
+        output = tgt
+        return_prev_states = list()
+
+        if prev_states is None:
+            for mod in self.layers:
+                output, states = mod.forward_step(output, None, memory, tgt_mask=tgt_mask,
+                                                  memory_mask=memory_mask,
+                                                  tgt_key_padding_mask=tgt_key_padding_mask,
+                                                  memory_key_padding_mask=memory_key_padding_mask)
+                return_prev_states.append(states)
+        else:
+            for i, mod in enumerate(self.layers):
+                output, states = mod.forward_step(output, prev_states[i], memory, tgt_mask=tgt_mask,
+                                                  memory_mask=memory_mask,
+                                                  tgt_key_padding_mask=tgt_key_padding_mask,
+                                                  memory_key_padding_mask=memory_key_padding_mask)
+                return_prev_states.append(states)
+
+        if self.norm is not None:
+            output = self.norm(output)
+
+        return output, return_prev_states
+
 
 class TransformerEncoderLayer(Module):
     r"""TransformerEncoderLayer is made up of self-attn and feedforward network.
@@ -425,6 +462,51 @@ class TransformerDecoderLayer(Module):
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
         return tgt
+
+    def forward_step(self, tgt, prev_states, memory, tgt_mask=None, memory_mask=None,
+                     tgt_key_padding_mask=None, memory_key_padding_mask=None):
+        """
+        Forward a step for decoder layer
+        :param tgt: the sequence to the decoder layer
+        :param prev_states: stashed stated of previous inputs. Should be a list of 3 tensors or None
+        :param memory: the sequence from the last layer of the encoder
+        :param tgt_mask: the mask for the tgt sequence
+        :param memory_mask: the mask for the memory sequence
+        :param tgt_key_padding_mask: the mask for the tgt keys per batch
+        :param memory_key_padding_mask: the mask for the memory keys per batch
+        :return:
+        """
+        return_prev_attns = list()
+
+        step_input = tgt[-1].unsqueeze(0)
+        step_tgt_mask = tgt_mask[-1].unsqueeze(0) if tgt_mask is not None else None
+        tgt2 = self.self_attn(step_input, tgt, tgt, attn_mask=step_tgt_mask,
+                              key_padding_mask=tgt_key_padding_mask)[0]
+        if prev_states is not None:
+            tgt2 = torch.cat([prev_states[0], tgt2], dim=0)
+        return_prev_attns.append(tgt2)
+        tgt = tgt + self.dropout1(tgt2)
+        tgt = self.norm1(tgt)
+
+        step_input = tgt[-1].unsqueeze(0)
+        step_memory_mask = memory_mask[-1].unsqueeze(0) if memory_mask is not None else None
+        tgt2 = self.multihead_attn(step_input, memory, memory, attn_mask=step_memory_mask,
+                                   key_padding_mask=memory_key_padding_mask)[0]
+        if prev_states is not None:
+            tgt2 = torch.cat([prev_states[1], tgt2], dim=0)
+        return_prev_attns.append(tgt2)
+        tgt = tgt + self.dropout2(tgt2)
+        tgt = self.norm2(tgt)
+
+        step_input = tgt[-1].unsqueeze(0)
+        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(step_input))))
+        if prev_states is not None:
+            tgt2 = torch.cat([prev_states[2], tgt2], dim=0)
+        return_prev_attns.append(tgt2)
+        tgt = tgt + self.dropout3(tgt2)
+        tgt = self.norm3(tgt)
+
+        return tgt, return_prev_attns
 
 
 def _get_clones(module, N):

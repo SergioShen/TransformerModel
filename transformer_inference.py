@@ -47,7 +47,7 @@ class MyTrainer(Trainer):
     def evaluate_batch(self, batch_data):
         pass
 
-    def inference(self, dataset, name, src_vocab, tgt_vocab, max_decode_length=64, beam_size=2):
+    def inference(self, dataset, name, src_vocab, tgt_vocab, max_decode_length=64):
         self.model.eval()
         device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         output_file = (self.output_dir / ('%s_inference_result.json' % name)).open('w', encoding='utf-8')
@@ -60,7 +60,33 @@ class MyTrainer(Trainer):
                 input_seq = ['<sos>'] + example[self.train_params['dataset']['input_key']] + ['<eos>']
                 input_ids = [src_vocab.stoi[token] for token in input_seq]
                 input_ids = torch.tensor(input_ids, dtype=torch.int64).unsqueeze(1).to(device)
-                model_output = self.model.inference(input_ids, max_decode_length, beam_size)
+                output_seq = self.model.inference(input_ids, max_decode_length)
+
+                output_tokens = [tgt_vocab.itos[idx] for idx in output_seq]
+                output_tokens = sub_tokens_to_tokens(output_tokens)
+
+                if output_tokens[1:-1] == example['tgt_tokens']:
+                    correct += 1
+                example['hyp_list'] = [output_tokens]
+                print(json.dumps(example), file=output_file)
+
+        self.logger.info('%s accuracy: %.6f' % (name.capitalize(), correct / total))
+        output_file.close()
+
+    def beam_search(self, dataset, name, src_vocab, tgt_vocab, max_decode_length=64, beam_size=2):
+        self.model.eval()
+        device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        output_file = (self.output_dir / ('%s_inference_result.json' % name)).open('w', encoding='utf-8')
+
+        total = 0
+        correct = 0
+        with torch.no_grad():
+            for i, example in tqdm(enumerate(dataset)):
+                total += 1
+                input_seq = ['<sos>'] + example[self.train_params['dataset']['input_key']] + ['<eos>']
+                input_ids = [src_vocab.stoi[token] for token in input_seq]
+                input_ids = torch.tensor(input_ids, dtype=torch.int64).unsqueeze(1).to(device)
+                model_output = self.model.beam_search(input_ids, max_decode_length, beam_size)
                 output_seqs, output_lengths, output_seq_scores = model_output
                 sorted_hypotheses = sorted(zip(output_seq_scores, output_seqs, output_lengths), reverse=True)
 
@@ -140,9 +166,9 @@ def main(args):
 
     logger.info('Inference begins...')
     logger.info('Evaluating %s' % train_params['dataset']['valid'])
-    trainer.inference(datasets['valid'], 'valid', src_field.vocab, tgt_field.vocab, max_decode_length=2048, beam_size=5)
+    trainer.inference(datasets['valid'], 'valid', src_field.vocab, tgt_field.vocab, max_decode_length=2048)
     logger.info('Evaluating %s' % train_params['dataset']['test'])
-    trainer.inference(datasets['test'], 'test', src_field.vocab, tgt_field.vocab, max_decode_length=2048, beam_size=5)
+    trainer.inference(datasets['test'], 'test', src_field.vocab, tgt_field.vocab, max_decode_length=2048)
 
 
 if __name__ == '__main__':
