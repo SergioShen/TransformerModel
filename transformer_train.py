@@ -79,7 +79,7 @@ def main(args):
     train_params = params['train_params']
     output_dir = Path(train_params['output_dir'])
     if not output_dir.exists():
-        output_dir.mkdir()
+        output_dir.mkdir(parents=True)
     if len(list(output_dir.iterdir())) != 0:
         raise FileExistsError('Output dir \'%s\' is not empty' % output_dir)
 
