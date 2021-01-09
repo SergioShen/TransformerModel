@@ -63,7 +63,7 @@ class Trainer:
     def train(self, train_data, valid_data=None, test_data=None, inference_every_epoch=False):
         self.model.train()
         device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        steps_per_epoch = len(train_data) // self.batch_size
+        steps_per_epoch = (len(train_data) + self.batch_size - 1) // self.batch_size
         total_steps = steps_per_epoch * self.n_epochs
         self.logger.info('Steps per epoch: %d, total steps: %d' % (steps_per_epoch, total_steps))
 
