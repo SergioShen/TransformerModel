@@ -16,11 +16,11 @@ import pickle
 from argparse import ArgumentParser
 from pathlib import Path
 from tensorboardX import SummaryWriter
-from nltk.translate.bleu_score import corpus_bleu
 
 from utils.logger import get_logger
 from utils.trainer import Trainer
 from utils.metrics import get_correct_num
+from utils.lr_scheduler import OneCycleLR
 from models.model import TransformerModel
 
 
@@ -41,6 +41,8 @@ class MyTrainer(Trainer):
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
 
         self.optimizer.step()
+        if isinstance(self.lr_scheduler, OneCycleLR):
+            self.lr_scheduler.step()
 
         return loss.item()
 
@@ -66,7 +68,8 @@ class MyTrainer(Trainer):
         self.cache['total'] = 0
 
     def handle_epoch_other_infos(self):
-        self.lr_scheduler.step(self.cache['valid_loss'])
+        if isinstance(self.lr_scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+            self.lr_scheduler.step(self.cache['valid_loss'])
 
     def inference(self, dataset, name, tgt_vocab, max_decode_length=64):
         pass
@@ -126,8 +129,14 @@ def main(args):
         optimizer = AdamW(model.parameters(), **train_params['optimizer_args'])
     else:
         optimizer = getattr(optim, train_params['optimizer'])(model.parameters(), **train_params['optimizer_args'])
-    lr_scheduler = getattr(optim.lr_scheduler, train_params['lr_scheduler'])(
-        optimizer, **train_params['lr_scheduler_args'])
+    if train_params['lr_scheduler'] == 'OneCycleLR':
+        from utils.lr_scheduler import OneCycleLR
+        steps_per_epoch = (len(datasets['train']) + train_params['batch_size'] - 1) // train_params['batch_size']
+        lr_scheduler = OneCycleLR(optimizer, max_lr=train_params['optimizer_args']['lr'],
+                                  epochs=train_params['n_epochs'], steps_per_epoch=steps_per_epoch)
+    else:
+        lr_scheduler = getattr(optim.lr_scheduler, train_params['lr_scheduler'])(
+            optimizer, **train_params['lr_scheduler_args'])
     loss_function = getattr(nn, train_params['loss_function'])(**train_params['loss_function_args'])
     if torch.cuda.is_available():
         model.cuda()
