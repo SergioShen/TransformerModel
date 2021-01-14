@@ -15,6 +15,7 @@ import pickle
 from argparse import ArgumentParser
 from pathlib import Path
 from tqdm import tqdm
+from nltk.translate.bleu_score import corpus_bleu
 
 from utils.logger import get_logger
 from utils.trainer import Trainer
@@ -25,7 +26,7 @@ def sub_tokens_to_tokens(sub_tokens):
     result = list()
     current = ''
     for sub_token in sub_tokens:
-        if sub_token.endswith('$$'):
+        if sub_token.endswith('@@'):
             current += sub_token[:-2]
         else:
             current += sub_token
@@ -54,6 +55,8 @@ class MyTrainer(Trainer):
 
         total = 0
         correct = 0
+        refs = list()
+        hyps = list()
         with torch.no_grad():
             for i, example in tqdm(enumerate(dataset)):
                 total += 1
@@ -64,13 +67,15 @@ class MyTrainer(Trainer):
 
                 output_tokens = [tgt_vocab.itos[idx] for idx in output_seq]
                 output_tokens = sub_tokens_to_tokens(output_tokens)
-
-                if output_tokens[1:-1] == example['tgt_tokens']:
+                refs.append([example[self.train_params['dataset']['output_key']]])
+                hyps.append(output_tokens[1:-1])
+                if output_tokens[1:-1] == example[self.train_params['dataset']['output_key']]:
                     correct += 1
                 example['hyp_list'] = [output_tokens]
                 print(json.dumps(example), file=output_file)
 
         self.logger.info('%s accuracy: %.6f' % (name.capitalize(), correct / total))
+        self.logger.info('%s BLEU score: %.6f' % (name.capitalize(), corpus_bleu(refs, hyps) * 100))
         output_file.close()
 
     def beam_search(self, dataset, name, src_vocab, tgt_vocab, max_decode_length=64, beam_size=2):
@@ -80,6 +85,8 @@ class MyTrainer(Trainer):
 
         total = 0
         correct = 0
+        refs = list()
+        hyps = list()
         with torch.no_grad():
             for i, example in tqdm(enumerate(dataset)):
                 total += 1
@@ -98,11 +105,14 @@ class MyTrainer(Trainer):
                     output_tokens = sub_tokens_to_tokens(output_tokens)
                     hyp_list.append(output_tokens)
 
-                if hyp_list[0][1:-1] == example['tgt_tokens']:
+                if hyp_list[0][1:-1] == example[self.train_params['dataset']['output_key']]:
                     correct += 1
                 example['hyp_list'] = hyp_list
+                refs.append([example[self.train_params['dataset']['output_key']]])
+                hyps.append(hyp_list[0][1:-1])
                 print(json.dumps(example), file=output_file)
         self.logger.info('%s accuracy: %.6f' % (name.capitalize(), correct / total))
+        self.logger.info('%s BLEU score: %.6f' % (name.capitalize(), corpus_bleu(refs, hyps) * 100))
         output_file.close()
 
 
