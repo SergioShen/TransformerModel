@@ -26,10 +26,18 @@ class Trainer:
         self.start_epoch = train_params['start_epoch']
         self.grad_clip = train_params['grad_clip']
         self.print_step = train_params['print_step']
+        self.checkpoint_num = train_params['checkpoint_num']
         self.cache = dict()
         self.step = 0
 
+        self.saved_models = list()
+
     def save_model(self, epoch):
+        if len(self.saved_models) == self.checkpoint_num:
+            victim_path = self.saved_models.pop(0)
+            self.logger.info('Delete previous checkpoint %s' % victim_path)
+            victim_path.unlink()
+
         checkpoint = dict()
         checkpoint['model'] = self.model.state_dict()
         checkpoint['optimizer'] = self.optimizer.state_dict()
@@ -41,6 +49,7 @@ class Trainer:
         checkpoint['batch_size'] = self.batch_size
 
         save_path = self.output_dir / ('%0.3d.epoch.pt' % epoch)
+        self.saved_models.append(save_path)
         torch.save(checkpoint, save_path)
 
     def load_model(self, model_path):

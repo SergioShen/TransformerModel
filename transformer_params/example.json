@@ -30,6 +30,7 @@
       "ignore_index": 1
     },
     "output_dir": "./transformer_result/example",
+    "checkpoint_num": 10,
     "batch_size": 64,
     "n_epochs": 30,
     "start_epoch": 1,
