@@ -81,13 +81,13 @@ class Trainer:
                 step_loss = self.train_batch(batch_data)
                 print_loss += step_loss
                 epoch_loss += step_loss
-                self.writer.add_scalar('loss/step_loss', step_loss, self.step)
 
                 # Print current information every `print_every` steps
                 if self.step % self.print_step == 0:
                     print_loss_avg = print_loss / self.print_step
                     print_loss = 0
                     self.logger.info('Progress %.2f%%, Train loss: %.6f', self.step / total_steps * 100, print_loss_avg)
+                    self.writer.add_scalar('loss/print_loss', print_loss_avg, self.step)
                     self.writer.add_scalar('lr', self.optimizer.param_groups[0]['lr'], self.step)
                     self.handle_print_other_infos()
 
